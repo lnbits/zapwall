@@ -298,6 +298,9 @@
               </div>
               <div class="col-12 col-md-6">
                 <q-toggle v-model="currentItem.auto_dm_unlock" label="Auto-send DM unlocks"></q-toggle>
+                <div class="text-caption text-grey-7 q-mt-xs">
+                  Unlock DMs use the creator signer key by default. A bot key is optional and overrides that sender.
+                </div>
               </div>
             </div>
 
@@ -606,18 +609,24 @@
         >
           <div class="row q-col-gutter-md q-pt-md">
             <div class="col-12 col-md-6">
-              <q-input filled type="password" v-model="settings.signer_private_key" label="Signer private key / nsec (optional)"></q-input>
+              <q-input filled type="password" v-model="settings.signer_private_key" label="Creator signer private key / nsec (optional)"></q-input>
               <div class="text-caption text-grey-7 q-mt-xs">
-                <span v-if="settings.signer_configured">A signer key is already saved. Enter a new one only to replace it.</span>
-                <span v-else>No signer key saved yet.</span>
+                <span v-if="settings.signer_configured">A creator signer key is already saved. It is used for publishing and, by default, for unlock DMs.</span>
+                <span v-else>No creator signer key saved yet.</span>
               </div>
             </div>
             <div class="col-12 col-md-6">
-              <q-input filled type="password" v-model="settings.bot_private_key" label="Bot private key / nsec (optional)"></q-input>
+              <q-input filled type="password" v-model="settings.bot_private_key" label="Bot private key / nsec (optional override)"></q-input>
               <div class="text-caption text-grey-7 q-mt-xs">
-                <span v-if="settings.bot_configured">A bot key is already saved. Enter a new one only to replace it.</span>
-                <span v-else>No bot key saved yet.</span>
+                <span v-if="settings.bot_configured">A bot key is already saved. Unlock DMs will use it instead of the creator signer key.</span>
+                <span v-else>No bot key saved. Leave it empty unless you want a separate DM-sending identity.</span>
               </div>
+            </div>
+            <div class="col-12">
+              <q-banner rounded class="bg-grey-2 text-grey-9">
+                <div class="text-weight-medium">DM sender</div>
+                <div v-text="dmKeyHelpText"></div>
+              </q-banner>
             </div>
           </div>
         </q-expansion-item>

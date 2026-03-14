@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from loguru import logger
+
 from lnbits.core.crud import get_standalone_payment
 from lnbits.extensions.nostrclient.helpers import normalize_public_key
 from lnbits.helpers import urlsafe_short_hash
@@ -65,12 +67,12 @@ async def create_access_purchase(
     purchase = await create_purchase(purchase)
     receipt = await ensure_receipt_for_purchase(purchase)
     settings = await get_settings(item.wallet)
-    if (
-        item.auto_dm_unlock
-        and settings
-        and base_url
-        and (settings.bot_private_key or settings.dm_mode.value == "manual")
-    ):
+    if item.auto_dm_unlock and settings and base_url:
+        logger.info(
+            "Zapwall processing auto-DM unlock for item {} purchase {}.",
+            item.id,
+            purchase.id,
+        )
         dm_result = await send_unlock_dm(
             settings=settings,
             item=item,
@@ -83,6 +85,12 @@ async def create_access_purchase(
             purchase.unlock_sent = True
             purchase.unlock_sent_at = timestamp_now()
             await update_purchase(purchase)
+        else:
+            logger.warning(
+                "Zapwall unlock DM was not sent for item {} purchase {}.",
+                item.id,
+                purchase.id,
+            )
     return purchase, token
 
 
@@ -99,7 +107,18 @@ async def finalize_invoice_payment(
         return None
     buyer_pubkey = payment.extra.get("buyer_pubkey")
     if not buyer_pubkey:
+        logger.warning(
+            "Zapwall could not finalize invoice payment {} for item {} because buyer_pubkey is missing.",
+            payment_hash,
+            item.id,
+        )
         return None
+    logger.info(
+        "Zapwall finalizing invoice payment {} for item {} and buyer {}.",
+        payment_hash,
+        item.id,
+        buyer_pubkey,
+    )
     purchase, _ = await create_access_purchase(
         item=item,
         buyer_pubkey=buyer_pubkey,

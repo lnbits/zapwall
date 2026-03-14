@@ -28,7 +28,6 @@
     <q-card-section>
       <div class="text-subtitle1 q-mb-md">Invoice fallback</div>
       <q-input filled dense v-model="buyerPubkey" label="Buyer pubkey, npub, or NIP-05"></q-input>
-      <q-input filled dense class="q-mt-sm" v-model="buyerNpub" label="Buyer npub (optional)"></q-input>
       <q-input filled dense class="q-mt-sm" type="number" v-model.number="amount" label="Amount sats"></q-input>
       <div class="q-mt-md">
         <q-btn unelevated color="primary" @click="createInvoice" :loading="loading">Create invoice</q-btn>
@@ -80,7 +79,6 @@
     data() {
       return {
         buyerPubkey: '',
-        buyerNpub: '',
         amount: publicItem.price,
         invoice: null,
         loading: false,
@@ -100,7 +98,6 @@
         try {
           const response = await LNbits.api.request('POST', `/zapwall/api/v1/items/${publicItem.id}/invoice`, null, {
             buyer_pubkey: this.buyerPubkey,
-            buyer_npub: this.buyerNpub || null,
             amount: this.amount
           })
           this.invoice = response.data

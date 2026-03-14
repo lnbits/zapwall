@@ -520,6 +520,7 @@ async def api_create_invoice(
             detail="buyer_pubkey is required for invoice fallback unlocks.",
         )
     buyer_pubkey = await _normalize_pubkey_or_400(data.buyer_pubkey)
+    buyer_npub = data.buyer_npub or get_npub(buyer_pubkey)
     amount = data.amount or item.price
     if item.exact_amount_only and amount != item.price:
         raise HTTPException(
@@ -541,7 +542,7 @@ async def api_create_invoice(
             "item_id": item.id,
             "wallet_id": item.wallet,
             "buyer_pubkey": buyer_pubkey,
-            "buyer_npub": data.buyer_npub,
+            "buyer_npub": buyer_npub,
             "base_url": str(request.base_url),
         },
     )

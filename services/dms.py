@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from loguru import logger
+
+from lnbits.core.services.nostr import send_nostr_dm
 from lnbits.extensions.nostrclient.helpers import normalize_public_key
-from lnbits.extensions.nostrclient.nostr.event import EncryptedDirectMessage
 from lnbits.extensions.nostrclient.nostr.key import PrivateKey
-from lnbits.extensions.nostrclient.router import nostr_client
 
 from ..models import DMDeliveryResponse, ZapwallItem, ZapwallReceipt, ZapwallSettings
 
@@ -27,34 +28,91 @@ async def send_unlock_dm(
         f"Open:\n{base_url}zapwall/unlock/{token}\n\n"
         f"Receipt:\n{receipt.receipt_signature}"
     )
-    if not settings.bot_private_key:
+    if settings.dm_mode.value == "manual":
+        logger.info(
+            "Zapwall DM delivery skipped for item {} because DM mode is manual.",
+            item.id,
+        )
         return DMDeliveryResponse(
             sent=False,
             event_id=None,
             event=None,
             message=message,
-            relays=settings.bot_relay_urls,
+            relays=[],
         )
+
+    sender_key = settings.bot_private_key or settings.signer_private_key
+    if not sender_key:
+        logger.warning(
+            "Zapwall DM delivery skipped for item {} because no sender key is configured.",
+            item.id,
+        )
+        return DMDeliveryResponse(
+            sent=False,
+            event_id=None,
+            event=None,
+            message=message,
+            relays=[],
+        )
+
     buyer_pubkey = normalize_public_key(buyer_pubkey)
-    private_key = _load_private_key(settings.bot_private_key)
-    dm = EncryptedDirectMessage(
-        recipient_pubkey=buyer_pubkey, cleartext_content=message
+    private_key = _load_private_key(sender_key)
+    relays = settings.bot_relay_urls if settings.bot_private_key else settings.relay_urls
+    relays = [relay for relay in relays if relay]
+    sender_kind = "bot" if settings.bot_private_key else "creator"
+
+    if not relays:
+        logger.warning(
+            "Zapwall DM delivery skipped for item {} because no relay URLs are configured.",
+            item.id,
+        )
+        return DMDeliveryResponse(
+            sent=False,
+            event_id=None,
+            event=None,
+            message=message,
+            relays=[],
+        )
+
+    logger.info(
+        "Zapwall sending unlock DM for item {} to {} using {} key via {} relay(s).",
+        item.id,
+        buyer_pubkey,
+        sender_kind,
+        len(relays),
     )
-    private_key.sign_event(dm)
-    event = {
-        "id": dm.id,
-        "pubkey": dm.public_key,
-        "created_at": dm.created_at,
-        "kind": dm.kind,
-        "tags": dm.tags,
-        "content": dm.content,
-        "sig": dm.signature,
-    }
-    nostr_client.relay_manager.publish_message(dm.to_message())
+    try:
+        event = await send_nostr_dm(
+            from_private_key_hex=private_key.hex(),
+            to_pubkey_hex=buyer_pubkey,
+            message=message,
+            relays=relays,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Zapwall DM delivery failed for item {} to {}: {}",
+            item.id,
+            buyer_pubkey,
+            exc,
+        )
+        return DMDeliveryResponse(
+            sent=False,
+            event_id=None,
+            event=None,
+            message=message,
+            relays=relays,
+        )
+
+    logger.info(
+        "Zapwall DM delivery succeeded for item {} to {} with event {}.",
+        item.id,
+        buyer_pubkey,
+        event.get("id"),
+    )
     return DMDeliveryResponse(
         sent=True,
-        event_id=dm.id,
+        event_id=event.get("id"),
         event=event,
         message=message,
-        relays=settings.bot_relay_urls,
+        relays=relays,
     )

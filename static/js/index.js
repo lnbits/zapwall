@@ -199,6 +199,15 @@ window.app = Vue.createApp({
       }
       return 'Zapwall will sign your profile metadata as a kind 0 event and publish it through nostrclient.'
     },
+    dmKeyHelpText() {
+      if (this.settings.bot_configured || this.settings.bot_private_key) {
+        return 'Unlock DMs will use the bot key. Leave bot key empty if you want DMs to come from the creator signer key instead.'
+      }
+      if (this.settings.signer_configured || this.settings.signer_private_key) {
+        return 'Unlock DMs will use the creator signer key by default. Add a bot key only if you want DMs to come from a separate automation identity.'
+      }
+      return 'To auto-send unlock DMs, save a creator signer key or an optional bot key.'
+    },
     currentItemTitle() {
       return this.currentItem?.id ? 'Edit Paywall' : 'Create Paywall'
     },
