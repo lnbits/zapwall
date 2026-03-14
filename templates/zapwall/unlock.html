@@ -1,0 +1,17 @@
+{% extends "public.html" %} {% block page %}
+<div class="q-pa-md" style="max-width: 720px; margin: 0 auto">
+  <h2>{{ item.title }}</h2>
+  <p>{{ item.full_text }}</p>
+  {% if item.media_urls %}
+  <p><strong>Unlocked media:</strong></p>
+  <ul>
+    {% for media in item.media_urls %}
+    <li><a href="{{ media }}">{{ media }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if receipt %}
+  <p><strong>Receipt signature:</strong> <code>{{ receipt.receipt_signature }}</code></p>
+  {% endif %}
+</div>
+{% endblock %}

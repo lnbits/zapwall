@@ -1,0 +1,25 @@
+{
+  "id": "zapwall",
+  "version": "0.1.0",
+  "name": "Zapwall",
+  "repo": "https://github.com/lnbits/zapwall",
+  "short_description": "Nostr-native paywalls and unlock receipts for creators.",
+  "description": "",
+  "tile": "/zapwall/static/image/1.png",
+  "min_lnbits_version": "1.5.0",
+  "contributors": [
+    {
+      "name": "Ben Arc",
+      "uri": "mailto:ben@lnbits.com",
+      "role": "Developer"
+    }
+  ],
+  "images": [],
+  "description_md": "",
+  "terms_and_conditions_md": "",
+  "license": "MIT",
+  "paid_features": "",
+  "tags": ["Nostr", "Creator", "Paywall"],
+  "donate": "",
+  "hidden": false
+}

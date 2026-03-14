@@ -1,0 +1,523 @@
+{% extends "base.html" %} {% from "macros.jinja" import window_vars with context %}
+{% block scripts %}
+{{ window_vars(user) }}
+<script>
+  window.zapwallData = {{ zapwall_data | tojson }}
+</script>
+<script src="/zapwall/static/js/index.js?v={{ cache_version }}"></script>
+{% endblock %}
+{% block page %}
+<div id="zapwall-app" class="row q-col-gutter-lg">
+  <div class="col-12 col-xl-3">
+    <q-card flat bordered class="q-pa-sm">
+      <q-list dense separator>
+        <q-item clickable :active="page === 'dashboard'" @click="goToPage('dashboard')">
+          <q-item-section avatar>
+            <q-icon name="dashboard"></q-icon>
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Overview</q-item-label>
+            <q-item-label caption>Stats and setup</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item clickable :active="page === 'items'" @click="goToPage('items')">
+          <q-item-section avatar>
+            <q-icon name="collections_bookmark"></q-icon>
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Paywalls</q-item-label>
+            <q-item-label caption>Manage your content</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item clickable :active="page === 'item'" @click="startNewItem">
+          <q-item-section avatar>
+            <q-icon name="add_circle"></q-icon>
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>New Paywall</q-item-label>
+            <q-item-label caption>Create a locked post</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item clickable :active="page === 'settings'" @click="goToPage('settings')">
+          <q-item-section avatar>
+            <q-icon name="settings"></q-icon>
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Settings</q-item-label>
+            <q-item-label caption>Nostr and delivery</q-item-label>
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </q-card>
+  </div>
+
+  <div class="col-12 col-xl-9">
+    <q-card v-if="page === 'dashboard'" flat bordered>
+      <q-card-section class="row items-start q-col-gutter-md">
+        <div class="col-12 col-lg-8">
+          <div class="text-h5">Zapwall</div>
+          <div class="text-subtitle2 text-grey-7">
+            LNbits handles payment and entitlement. Nostr handles discovery and identity.
+          </div>
+        </div>
+        <div class="col-12 col-lg-4">
+          <q-banner rounded inline-actions class="bg-primary text-white">
+            Keep it simple: connect your pubkey, create a post, publish the preview note, then test an unlock.
+          </q-banner>
+        </div>
+      </q-card-section>
+
+      <q-separator></q-separator>
+
+      <q-card-section class="row q-col-gutter-md">
+        <div class="col-12 col-md-4">
+          <q-card flat bordered class="full-height">
+            <q-card-section>
+              <div class="text-caption text-grey-7">Items</div>
+              <div class="text-h4" v-text="stats.items"></div>
+            </q-card-section>
+          </q-card>
+        </div>
+        <div class="col-12 col-md-4">
+          <q-card flat bordered class="full-height">
+            <q-card-section>
+              <div class="text-caption text-grey-7">Sales</div>
+              <div class="text-h4" v-text="stats.sales_count"></div>
+            </q-card-section>
+          </q-card>
+        </div>
+        <div class="col-12 col-md-4">
+          <q-card flat bordered class="full-height">
+            <q-card-section>
+              <div class="text-caption text-grey-7">Sats Earned</div>
+              <div class="text-h4" v-text="stats.sats_earned"></div>
+            </q-card-section>
+          </q-card>
+        </div>
+      </q-card-section>
+
+      <q-card-section class="row q-col-gutter-md">
+        <div class="col-12 col-lg-6">
+          <q-card flat bordered>
+            <q-card-section class="row items-center">
+              <div class="col">
+                <div class="text-subtitle1">Quick Setup</div>
+                <div class="text-caption text-grey-7">Three steps to a working MVP.</div>
+              </div>
+              <div class="col-auto">
+                <q-btn flat color="primary" @click="goToPage('settings')">Open settings</q-btn>
+              </div>
+            </q-card-section>
+            <q-separator></q-separator>
+            <q-list dense>
+              <q-item v-for="step in setupChecklist" :key="step.key">
+                <q-item-section avatar>
+                  <q-icon :name="step.done ? 'check_circle' : 'radio_button_unchecked'" :color="step.done ? 'positive' : 'grey-6'"></q-icon>
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label v-text="step.label"></q-item-label>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </q-card>
+        </div>
+
+        <div class="col-12 col-lg-6">
+          <q-card flat bordered>
+            <q-card-section class="row items-center">
+              <div class="col">
+                <div class="text-subtitle1">Recent Unlocks</div>
+                <div class="text-caption text-grey-7">Latest successful purchases.</div>
+              </div>
+            </q-card-section>
+            <q-separator></q-separator>
+            <q-list v-if="stats.recent_unlocks.length" separator>
+              <q-item v-for="unlock in stats.recent_unlocks" :key="unlock.id">
+                <q-item-section>
+                  <q-item-label v-text="unlock.title"></q-item-label>
+                  <q-item-label caption v-text="shortPubkey(unlock.buyer_pubkey)"></q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <q-badge color="positive" :label="`${unlock.amount_paid} sats`"></q-badge>
+                </q-item-section>
+              </q-item>
+            </q-list>
+            <q-card-section v-else class="text-caption text-grey-7">
+              No unlocks yet. Publish a preview note and test a zap or invoice unlock.
+            </q-card-section>
+          </q-card>
+        </div>
+      </q-card-section>
+    </q-card>
+
+    <q-card v-if="page === 'items'" flat bordered>
+      <q-card-section class="row items-center q-col-gutter-md">
+        <div class="col">
+          <div class="text-h5">Paywalls</div>
+          <div class="text-caption text-grey-7">
+            Keep the list simple. Click any item to edit or publish it.
+          </div>
+        </div>
+        <div class="col-auto">
+          <q-btn unelevated color="primary" icon="add" @click="startNewItem">New paywall</q-btn>
+        </div>
+      </q-card-section>
+      <q-separator></q-separator>
+
+      <q-card-section v-if="!hasItems">
+        <q-banner rounded class="bg-grey-2 text-grey-9">
+          You do not have any paywalls yet. Start with a paid text post, set a price, then publish a preview note.
+          <template v-slot:action>
+            <q-btn flat color="primary" @click="startNewItem">Create first paywall</q-btn>
+          </template>
+        </q-banner>
+      </q-card-section>
+
+      <q-list v-else separator>
+        <q-item v-for="item in items" :key="item.id" clickable @click="editItem(item)">
+          <q-item-section>
+            <q-item-label class="row items-center q-gutter-sm">
+              <span v-text="item.title"></span>
+              <q-badge outline :color="statusColor(item.status)" :label="item.status"></q-badge>
+            </q-item-label>
+            <q-item-label caption>
+              <span v-text="kindLabel(item.kind)"></span>
+              ·
+              <span v-text="`${item.price} sats`"></span>
+              <span v-if="item.preview_event_id">
+                · published to Nostr
+              </span>
+            </q-item-label>
+          </q-item-section>
+          <q-item-section side class="row items-center q-gutter-xs">
+            <q-btn flat dense icon="open_in_new" @click.stop="openPublicItem(item)">
+              <q-tooltip>Open public page</q-tooltip>
+            </q-btn>
+            <q-btn flat dense icon="edit" @click.stop="editItem(item)">
+              <q-tooltip>Edit</q-tooltip>
+            </q-btn>
+            <q-btn flat dense icon="delete" color="negative" @click.stop="deleteItem(item)">
+              <q-tooltip>Delete</q-tooltip>
+            </q-btn>
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </q-card>
+
+    <q-card v-if="page === 'item'" flat bordered>
+      <q-card-section class="row items-center q-col-gutter-md">
+        <div class="col">
+          <div class="text-h5" v-text="currentItemTitle"></div>
+          <div class="text-caption text-grey-7">
+            Start with the basics. Advanced options are hidden below.
+          </div>
+        </div>
+        <div class="col-auto row items-center q-gutter-sm">
+          <q-badge outline :color="currentItemStatusColor" :label="currentItem.status || 'draft'"></q-badge>
+          <q-btn flat @click="goToPage('items')">Back to list</q-btn>
+        </div>
+      </q-card-section>
+
+      <q-separator></q-separator>
+
+      <q-card-section>
+        <q-stepper v-model="currentStep" flat animated color="primary" alternative-labels>
+          <q-step :name="1" title="Public preview" caption="What buyers see before paying" :done="currentStep > 1">
+            <div class="row q-col-gutter-md">
+              <div class="col-12 col-md-8">
+                <q-input filled v-model="currentItem.title" label="Title"></q-input>
+              </div>
+              <div class="col-12 col-md-4">
+                <q-input filled v-model="currentItem.slug" label="Slug (optional)"></q-input>
+              </div>
+              <div class="col-12 col-md-4">
+                <q-select
+                  filled
+                  emit-value
+                  map-options
+                  v-model="currentItem.kind"
+                  :options="itemKindOptions"
+                  label="Type"
+                ></q-select>
+              </div>
+              <div class="col-12 col-md-4">
+                <q-input filled type="number" v-model.number="currentItem.price" label="Price (sats)"></q-input>
+              </div>
+              <div class="col-12 col-md-4">
+                <q-select
+                  filled
+                  emit-value
+                  map-options
+                  v-model="currentItem.status"
+                  :options="itemStatusOptions"
+                  label="Status"
+                ></q-select>
+              </div>
+              <div class="col-12">
+                <q-input filled autogrow type="textarea" v-model="currentItem.preview_text" label="Preview text shown publicly"></q-input>
+              </div>
+              <div class="col-12">
+                <q-input filled autogrow type="textarea" v-model="currentItem.full_text" label="Unlocked text buyers receive after payment"></q-input>
+              </div>
+            </div>
+
+            <q-stepper-navigation>
+              <q-btn unelevated color="primary" @click="currentStep = 2">Continue</q-btn>
+            </q-stepper-navigation>
+          </q-step>
+
+          <q-step :name="2" title="Unlocked content" caption="What buyers get after paying">
+            <div class="row q-col-gutter-md">
+              <div class="col-12 col-md-6">
+                <q-select
+                  filled
+                  emit-value
+                  map-options
+                  v-model="currentItem.unlock_type"
+                  :options="unlockModeOptions"
+                  label="Unlock mode"
+                ></q-select>
+              </div>
+              <div class="col-12 col-md-6">
+                <q-input filled v-model="currentItem.cover_image" label="Preview cover image URL (optional)"></q-input>
+              </div>
+              <div class="col-12 col-md-6">
+                <q-toggle v-model="currentItem.exact_amount_only" label="Require exact payment amount"></q-toggle>
+              </div>
+              <div class="col-12 col-md-6">
+                <q-toggle v-model="currentItem.auto_dm_unlock" label="Auto-send DM unlocks"></q-toggle>
+              </div>
+            </div>
+
+            <q-expansion-item
+              v-model="itemAdvancedOpen"
+              icon="tune"
+              label="Advanced item options"
+              class="q-mt-md"
+              header-class="text-grey-8"
+            >
+              <div class="row q-col-gutter-md q-pt-md">
+                <div class="col-12 col-md-6">
+                  <div class="text-caption q-mb-sm">Preview media URLs</div>
+                  <div class="text-caption text-grey-7 q-mb-sm">Use hosted file URLs for now. Blob storage is not enabled in this MVP.</div>
+                  <div class="row q-col-gutter-sm q-mb-sm">
+                    <div class="col">
+                      <q-input filled dense v-model="newPreviewMediaUrl" label="Add preview media URL"></q-input>
+                    </div>
+                    <div class="col-auto">
+                      <q-btn unelevated color="primary" @click="addPreviewMediaUrl">Add</q-btn>
+                    </div>
+                  </div>
+                  <q-chip
+                    v-for="(url, index) in currentItem.preview_media_urls"
+                    :key="`preview-${url}-${index}`"
+                    removable
+                    @remove="removePreviewMediaUrl(index)"
+                  >
+                    <span v-text="url"></span>
+                  </q-chip>
+                </div>
+                <div class="col-12 col-md-4">
+                  <q-input filled type="number" v-model.number="currentItem.media_upload_bytes" label="Upload bytes"></q-input>
+                </div>
+                <div class="col-12 col-md-4">
+                  <q-input filled type="number" v-model.number="currentItem.expires_at" label="Expiry timestamp (optional)"></q-input>
+                </div>
+                <div class="col-12 col-md-6">
+                  <div class="text-caption q-mb-sm">Unlocked media URLs</div>
+                  <div class="text-caption text-grey-7 q-mb-sm">These URLs are shown only after payment.</div>
+                  <div class="row q-col-gutter-sm q-mb-sm">
+                    <div class="col">
+                      <q-input filled dense v-model="newMediaUrl" label="Add unlocked media URL"></q-input>
+                    </div>
+                    <div class="col-auto">
+                      <q-btn unelevated color="primary" @click="addMediaUrl">Add</q-btn>
+                    </div>
+                  </div>
+                  <q-chip
+                    v-for="(url, index) in currentItem.media_urls"
+                    :key="url + index"
+                    removable
+                    @remove="removeMediaUrl(index)"
+                  >
+                    <span v-text="url"></span>
+                  </q-chip>
+                </div>
+              </div>
+            </q-expansion-item>
+
+            <q-stepper-navigation>
+              <q-btn flat @click="currentStep = 1">Back</q-btn>
+              <q-btn unelevated color="primary" @click="saveItem" :loading="loading">Save paywall</q-btn>
+            </q-stepper-navigation>
+          </q-step>
+        </q-stepper>
+      </q-card-section>
+
+      <q-separator></q-separator>
+
+      <q-card-section v-if="currentItem.id">
+        <div class="row q-col-gutter-md">
+          <div class="col-12 col-lg-7">
+            <div class="text-subtitle1">Publish preview note</div>
+            <div class="text-caption text-grey-7 q-mb-md">
+              When this is published, buyers can zap the note and receive a DM unlock.
+            </div>
+            <q-input
+              filled
+              autogrow
+              type="textarea"
+              v-model="publishContentOverride"
+              label="Preview note override (optional)"
+            ></q-input>
+            <div class="q-mt-md row q-gutter-sm">
+              <q-btn
+                unelevated
+                color="secondary"
+                :disable="!canPublishCurrentItem"
+                :loading="loading"
+                @click="publishPreview"
+              >
+                Publish preview
+              </q-btn>
+              <q-btn flat icon="content_copy" v-if="publicLink" @click="copyText(publicLink)">
+                Copy public link
+              </q-btn>
+            </div>
+            <div class="q-mt-md" v-if="currentItem.preview_event_id">
+              <div class="text-caption">Preview event ID</div>
+              <code v-text="currentItem.preview_event_id"></code>
+            </div>
+          </div>
+
+          <div class="col-12 col-lg-5">
+            <q-card flat bordered class="bg-grey-1">
+              <q-card-section>
+                <div class="text-subtitle2">Recent buyers</div>
+              </q-card-section>
+              <q-separator></q-separator>
+              <q-list v-if="buyers.length" separator dense>
+                <q-item v-for="buyer in buyers" :key="buyer.id">
+                  <q-item-section>
+                    <q-item-label v-text="shortPubkey(buyer.buyer_pubkey)"></q-item-label>
+                    <q-item-label caption v-text="`${buyer.amount_paid} sats`"></q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <q-badge :color="buyer.unlock_sent ? 'positive' : 'grey-6'" :label="buyer.unlock_sent ? 'DM sent' : 'Pending DM'"></q-badge>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+              <q-card-section v-else class="text-caption text-grey-7">
+                No buyers yet.
+              </q-card-section>
+            </q-card>
+          </div>
+        </div>
+
+        <q-card flat bordered class="q-mt-md" v-if="previewEvent">
+          <q-card-section>
+            <div class="text-subtitle2">Latest generated event payload</div>
+            <pre style="white-space: pre-wrap; margin: 0" v-text="JSON.stringify(previewEvent.event, null, 2)"></pre>
+          </q-card-section>
+        </q-card>
+      </q-card-section>
+    </q-card>
+
+    <q-card v-if="page === 'settings'" flat bordered>
+      <q-card-section>
+        <div class="text-h5">Settings</div>
+        <div class="text-caption text-grey-7">
+          Configure your creator identity, relays, and DM delivery.
+        </div>
+      </q-card-section>
+      <q-separator></q-separator>
+
+      <q-card-section>
+        <q-banner rounded :class="settingsReady ? 'bg-positive text-white' : 'bg-warning text-dark'">
+          <span v-if="settingsReady">
+            Creator pubkey is configured. You can publish preview notes now.
+          </span>
+          <span v-else>
+            Start here: add your creator pubkey or npub before publishing anything.
+          </span>
+        </q-banner>
+      </q-card-section>
+
+      <q-card-section>
+        <q-banner rounded :class="nostrclientActive ? 'bg-positive text-white' : 'bg-orange-2 text-dark'">
+          <div class="text-weight-medium">Nostrclient dependency</div>
+          <div v-text="nostrDependencyText"></div>
+        </q-banner>
+      </q-card-section>
+
+      <q-card-section class="row q-col-gutter-md">
+        <div class="col-12 col-md-6">
+          <q-input filled v-model="settings.creator_nostr_pubkey" label="Creator pubkey or npub"></q-input>
+        </div>
+        <div class="col-12 col-md-6">
+          <q-input filled v-model="settings.display_name" label="Display name (optional)"></q-input>
+        </div>
+        <div class="col-12 col-md-6">
+          <q-select
+            filled
+            multiple
+            use-chips
+            use-input
+            hide-dropdown-icon
+            new-value-mode="add-unique"
+            v-model="settings.relay_urls"
+            :options="settings.relay_urls"
+            label="Creator relays"
+            hint="Press Enter after each relay URL"
+          ></q-select>
+        </div>
+        <div class="col-12 col-md-6">
+          <q-select
+            filled
+            multiple
+            use-chips
+            use-input
+            hide-dropdown-icon
+            new-value-mode="add-unique"
+            v-model="settings.bot_relay_urls"
+            :options="settings.bot_relay_urls"
+            label="Bot relays (optional)"
+            hint="Press Enter after each relay URL"
+          ></q-select>
+        </div>
+        <div class="col-12 col-md-4">
+          <q-select filled v-model="settings.dm_mode" :options="['nostrclient', 'manual']" label="DM mode"></q-select>
+        </div>
+        <div class="col-12 col-md-4">
+          <q-select filled v-model="settings.signing_mode" :options="['external', 'internal']" label="Signing mode"></q-select>
+        </div>
+        <div class="col-12 col-md-4" v-if="isSuperUser">
+          <q-input filled type="number" v-model.number="settings.sats_per_mb" label="Sats per MB"></q-input>
+        </div>
+      </q-card-section>
+
+      <q-card-section>
+        <q-expansion-item
+          v-model="settingsAdvancedOpen"
+          icon="vpn_key"
+          label="Advanced keys"
+          header-class="text-grey-8"
+        >
+          <div class="row q-col-gutter-md q-pt-md">
+            <div class="col-12 col-md-6">
+              <q-input filled type="password" v-model="settings.signer_private_key" label="Signer private key / nsec (optional)"></q-input>
+            </div>
+            <div class="col-12 col-md-6">
+              <q-input filled type="password" v-model="settings.bot_private_key" label="Bot private key / nsec (optional)"></q-input>
+            </div>
+          </div>
+        </q-expansion-item>
+      </q-card-section>
+
+      <q-card-actions align="right">
+        <q-btn unelevated color="primary" :loading="loading" @click="saveSettings">Save settings</q-btn>
+      </q-card-actions>
+    </q-card>
+  </div>
+</div>
+{% endblock %}

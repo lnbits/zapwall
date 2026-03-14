@@ -1,0 +1,100 @@
+{% extends "public.html" %} {% block page %}
+<div class="q-pa-md" style="max-width: 780px; margin: 0 auto" id="zapwall-public">
+  <q-card>
+    <q-card-section>
+      <div class="text-h4">{{ item.title }}</div>
+      <div class="text-caption">Preview event: {{ item.preview_event_id or "not published" }}</div>
+    </q-card-section>
+    {% if item.cover_image %}
+    <img src="{{ item.cover_image }}" alt="{{ item.title }}" style="max-width: 100%" />
+    {% endif %}
+    {% if item.preview_media_urls %}
+    <q-card-section>
+      <div class="text-subtitle2 q-mb-sm">Preview media</div>
+      <ul>
+        {% for media in item.preview_media_urls %}
+        <li><a href="{{ media }}">{{ media }}</a></li>
+        {% endfor %}
+      </ul>
+    </q-card-section>
+    {% endif %}
+    <q-card-section>
+      <p>{{ item.preview_text }}</p>
+      <p><strong>Price:</strong> {{ item.price }} sats</p>
+      <p><strong>Unlock mode:</strong> {{ item.unlock_mode.value }}</p>
+      <p><strong>Nostr:</strong> zap the preview note or use the invoice fallback below.</p>
+    </q-card-section>
+    <q-separator></q-separator>
+    <q-card-section>
+      <div class="text-subtitle1 q-mb-md">Invoice fallback</div>
+      <q-input filled dense v-model="buyerPubkey" label="Buyer pubkey or npub"></q-input>
+      <q-input filled dense class="q-mt-sm" v-model="buyerNpub" label="Buyer npub (optional)"></q-input>
+      <q-input filled dense class="q-mt-sm" type="number" v-model.number="amount" label="Amount sats"></q-input>
+      <div class="q-mt-md">
+        <q-btn unelevated color="primary" @click="createInvoice" :loading="loading">Create invoice</q-btn>
+      </div>
+      <div v-if="invoice" class="q-mt-md">
+        <div class="text-caption">BOLT11</div>
+        <pre style="white-space: pre-wrap">${ invoice.payment_request }</pre>
+        <q-btn flat @click="copyText(invoice.payment_request)">Copy invoice</q-btn>
+        <q-btn flat color="secondary" @click="pollStatus" :loading="polling">Check payment</q-btn>
+      </div>
+      <div v-if="unlockUrl" class="q-mt-md">
+        <a :href="unlockUrl">Open unlocked content</a>
+      </div>
+    </q-card-section>
+  </q-card>
+</div>
+<script>
+  const publicItem = {{ item | tojson }};
+  Vue.createApp({
+    mixins: [windowMixin],
+    delimiters: ['${', '}'],
+    data() {
+      return {
+        buyerPubkey: '',
+        buyerNpub: '',
+        amount: publicItem.price,
+        invoice: null,
+        loading: false,
+        polling: false,
+        unlockUrl: null
+      }
+    },
+    methods: {
+      async createInvoice() {
+        this.loading = true
+        try {
+          const response = await LNbits.api.request('POST', `/zapwall/api/v1/items/${publicItem.id}/invoice`, null, {
+            buyer_pubkey: this.buyerPubkey,
+            buyer_npub: this.buyerNpub || null,
+            amount: this.amount
+          })
+          this.invoice = response.data
+          this.unlockUrl = null
+        } catch (err) {
+          LNbits.utils.notifyApiError(err)
+        } finally {
+          this.loading = false
+        }
+      },
+      async pollStatus() {
+        if (!this.invoice) return
+        this.polling = true
+        try {
+          const response = await LNbits.api.request('GET', `/zapwall/api/v1/items/${publicItem.id}/status?payment_hash=${this.invoice.payment_hash}`)
+          if (response.data.has_access && response.data.unlock_token) {
+            this.unlockUrl = `/zapwall/unlock/${response.data.unlock_token}`
+          } else {
+            this.$q.notify({type: 'info', message: response.data.paid ? 'Payment seen but not finalized yet.' : 'Payment not settled yet.'})
+          }
+        } catch (err) {
+          LNbits.utils.notifyApiError(err)
+        } finally {
+          this.polling = false
+        }
+      }
+    }
+  }).mount('#zapwall-public')
+</script>
+{% endblock %}

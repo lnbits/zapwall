@@ -1,0 +1,9 @@
+{
+  "repos": [
+    {
+      "id": "zapwall",
+      "organisation": "lnbits",
+      "repository": "zapwall"
+    }
+  ]
+}
