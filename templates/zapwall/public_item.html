@@ -27,27 +27,54 @@
     <q-separator></q-separator>
     <q-card-section>
       <div class="text-subtitle1 q-mb-md">Invoice fallback</div>
-      <q-input filled dense v-model="buyerPubkey" label="Buyer pubkey or npub"></q-input>
+      <q-input filled dense v-model="buyerPubkey" label="Buyer pubkey, npub, or NIP-05"></q-input>
       <q-input filled dense class="q-mt-sm" v-model="buyerNpub" label="Buyer npub (optional)"></q-input>
       <q-input filled dense class="q-mt-sm" type="number" v-model.number="amount" label="Amount sats"></q-input>
       <div class="q-mt-md">
         <q-btn unelevated color="primary" @click="createInvoice" :loading="loading">Create invoice</q-btn>
       </div>
-      <div v-if="invoice" class="q-mt-md">
-        <div class="text-caption">BOLT11</div>
-        <pre style="white-space: pre-wrap">${ invoice.payment_request }</pre>
-        <q-btn flat @click="copyText(invoice.payment_request)">Copy invoice</q-btn>
-        <q-btn flat color="secondary" @click="pollStatus" :loading="polling">Check payment</q-btn>
-      </div>
       <div v-if="unlockUrl" class="q-mt-md">
-        <a :href="unlockUrl">Open unlocked content</a>
+        <q-banner rounded class="bg-positive text-white">
+          Payment received. <a :href="unlockUrl" class="text-white text-weight-bold">Open unlocked content</a>
+        </q-banner>
       </div>
     </q-card-section>
   </q-card>
 </div>
+
+<q-dialog v-model="qr.show" position="top">
+  <q-card class="q-pa-lg q-pt-xl lnbits__dialog-card">
+    <q-responsive :ratio="1" class="q-mx-xl q-mb-md">
+      <lnbits-qrcode
+        :value="qr.payment_request"
+        :options="{width: 800}"
+        class="rounded-borders"
+      ></lnbits-qrcode>
+    </q-responsive>
+    <div class="text-h6 q-mb-sm">Pay to unlock</div>
+    <div class="text-caption q-mb-md">The dialog will update automatically when payment arrives.</div>
+    <div class="text-caption">BOLT11</div>
+    <pre style="white-space: pre-wrap">${ qr.payment_request }</pre>
+    <div class="row q-mt-lg">
+      <q-btn outline color="grey" @click="copyInvoice">Copy invoice</q-btn>
+      <q-btn v-close-popup flat color="grey" class="q-ml-auto">Close</q-btn>
+    </div>
+  </q-card>
+</q-dialog>
+
+<q-dialog v-model="paymentTick" position="top">
+  <q-icon
+    name="check"
+    transition-show="fade"
+    class="text-light-green"
+    style="font-size: min(90vw, 20em)"
+  ></q-icon>
+</q-dialog>
+{% endblock %} {% block scripts %}
 <script>
-  const publicItem = {{ item | tojson }};
-  Vue.createApp({
+  const publicItem = {{ public_item_json | tojson }};
+  window.app = Vue.createApp({
+    el: '#vue',
     mixins: [windowMixin],
     delimiters: ['${', '}'],
     data() {
@@ -57,8 +84,14 @@
         amount: publicItem.price,
         invoice: null,
         loading: false,
-        polling: false,
-        unlockUrl: null
+        unlockUrl: null,
+        paymentTick: false,
+        websocketConnection: null,
+        qr: {
+          show: false,
+          payment_request: '',
+          payment_hash: ''
+        }
       }
     },
     methods: {
@@ -72,29 +105,77 @@
           })
           this.invoice = response.data
           this.unlockUrl = null
+          this.qr.payment_request = response.data.payment_request
+          this.qr.payment_hash = response.data.payment_hash
+          this.qr.show = true
+          this.openPaymentWebsocket()
         } catch (err) {
           LNbits.utils.notifyApiError(err)
         } finally {
           this.loading = false
         }
       },
-      async pollStatus() {
+      openPaymentWebsocket() {
+        if (!this.qr.payment_hash) return
+        if (this.websocketConnection) {
+          this.websocketConnection.close()
+        }
+        const url = new URL(window.location)
+        url.protocol = url.protocol === 'https:' ? 'wss' : 'ws'
+        url.pathname = `/api/v1/ws/${this.qr.payment_hash}`
+        const ws = new WebSocket(url)
+        this.websocketConnection = ws
+        ws.addEventListener('message', async ({data}) => {
+          const payload = JSON.parse(data)
+          if (payload.pending === false) {
+            await this.finalizePayment()
+            ws.close()
+          }
+        })
+        ws.addEventListener('close', () => {
+          if (this.websocketConnection === ws) {
+            this.websocketConnection = null
+          }
+        })
+      },
+      async finalizePayment() {
         if (!this.invoice) return
-        this.polling = true
         try {
-          const response = await LNbits.api.request('GET', `/zapwall/api/v1/items/${publicItem.id}/status?payment_hash=${this.invoice.payment_hash}`)
+          const response = await LNbits.api.request(
+            'GET',
+            `/zapwall/api/v1/items/${publicItem.id}/status?payment_hash=${this.invoice.payment_hash}`
+          )
           if (response.data.has_access && response.data.unlock_token) {
             this.unlockUrl = `/zapwall/unlock/${response.data.unlock_token}`
-          } else {
-            this.$q.notify({type: 'info', message: response.data.paid ? 'Payment seen but not finalized yet.' : 'Payment not settled yet.'})
+            this.qr.show = false
+            this.paymentTick = true
+            this.$q.notify({
+              type: 'positive',
+              message: 'Payment received. Unlock ready.'
+            })
           }
         } catch (err) {
           LNbits.utils.notifyApiError(err)
-        } finally {
-          this.polling = false
         }
+      },
+      copyInvoice() {
+        if (!this.qr.payment_request) return
+        Quasar.copyToClipboard(this.qr.payment_request).then(() => {
+          Quasar.Notify.create({
+            message: 'Invoice copied to clipboard!',
+            position: 'bottom'
+          })
+        })
+      }
+    },
+    mounted() {
+      window.g.isPublicPage = true
+    },
+    beforeUnmount() {
+      if (this.websocketConnection) {
+        this.websocketConnection.close()
       }
     }
-  }).mount('#zapwall-public')
+  })
 </script>
 {% endblock %}

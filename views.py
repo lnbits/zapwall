@@ -166,7 +166,12 @@ async def public_item_page(request: Request, item_id: str):
     )
     return zapwall_renderer().TemplateResponse(
         "zapwall/public_item.html",
-        {"request": request, "item": public_item, "item_full": item},
+        {
+            "request": request,
+            "item": public_item,
+            "item_full": item,
+            "public_item_json": jsonable_encoder(public_item),
+        },
     )
 
 

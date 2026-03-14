@@ -6,6 +6,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
 from lnbits.core.crud import get_user
 from lnbits.core.models import CreateInvoice, WalletTypeInfo
+from lnbits.core.services.nostr import fetch_nip5_details
 from lnbits.core.services import create_payment_request
 from lnbits.decorators import require_admin_key, require_invoice_key
 from lnbits.extensions.nostrclient.helpers import normalize_public_key
@@ -112,10 +113,13 @@ def _unlock_media_urls(urls: list[str], token: str) -> list[str]:
     return [with_unlock_token(url, token) for url in urls]
 
 
-def _normalize_pubkey_or_400(pubkey: str) -> str:
+async def _normalize_pubkey_or_400(pubkey: str) -> str:
     try:
+        if "@" in pubkey:
+            resolved_pubkey, _ = await fetch_nip5_details(pubkey.strip())
+            return normalize_public_key(resolved_pubkey)
         return normalize_public_key(pubkey)
-    except ValueError as exc:
+    except Exception as exc:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST, detail=str(exc)
         ) from exc
@@ -287,7 +291,7 @@ async def api_update_settings(
     update_data = data.dict(exclude_unset=True)
 
     if "creator_nostr_pubkey" in update_data and update_data["creator_nostr_pubkey"]:
-        normalized_pubkey = _normalize_pubkey_or_400(
+        normalized_pubkey = await _normalize_pubkey_or_400(
             update_data["creator_nostr_pubkey"]
         )
         creator.nostr_pubkey = normalized_pubkey
@@ -500,7 +504,7 @@ async def api_create_invoice(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="buyer_pubkey is required for invoice fallback unlocks.",
         )
-    buyer_pubkey = _normalize_pubkey_or_400(data.buyer_pubkey)
+    buyer_pubkey = await _normalize_pubkey_or_400(data.buyer_pubkey)
     amount = data.amount or item.price
     if item.exact_amount_only and amount != item.price:
         raise HTTPException(
@@ -547,7 +551,7 @@ async def api_item_status(
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Item not found.")
     if pubkey:
         purchase = await get_purchase_for_item_pubkey(
-            item_id, _normalize_pubkey_or_400(pubkey)
+            item_id, await _normalize_pubkey_or_400(pubkey)
         )
         if purchase:
             return PurchaseStatusResponse(
@@ -613,7 +617,9 @@ async def api_entitlement(
     item_id: str,
     pubkey: str,
 ) -> EntitlementResponse:
-    purchase = await get_purchase_for_item_pubkey(item_id, _normalize_pubkey_or_400(pubkey))
+    purchase = await get_purchase_for_item_pubkey(
+        item_id, await _normalize_pubkey_or_400(pubkey)
+    )
     if not purchase:
         return EntitlementResponse(has_access=False, receipt=None, expires_at=None)
     receipt = await ensure_receipt_for_purchase(purchase)
@@ -653,7 +659,7 @@ async def api_zaps_notify(
             status_code=HTTPStatus.BAD_REQUEST,
             detail=f"Minimum unlock amount is {item.price} sats.",
         )
-    buyer_pubkey = _normalize_pubkey_or_400(data.buyer_pubkey)
+    buyer_pubkey = await _normalize_pubkey_or_400(data.buyer_pubkey)
 
     purchase, token = await create_access_purchase(
         item=item,

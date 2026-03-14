@@ -467,7 +467,7 @@
             Creator pubkey is configured. You can publish preview notes now.
           </span>
           <span v-else>
-            Start here: add your creator pubkey or npub before publishing anything.
+            Start here: add your creator pubkey, npub, or NIP-05 before publishing anything.
           </span>
         </q-banner>
       </q-card-section>
@@ -481,7 +481,7 @@
 
       <q-card-section class="row q-col-gutter-md">
         <div class="col-12 col-md-6">
-          <q-input filled v-model="settings.creator_nostr_pubkey" label="Creator pubkey or npub"></q-input>
+          <q-input filled v-model="settings.creator_nostr_pubkey" label="Creator pubkey, npub, or NIP-05"></q-input>
         </div>
         <div class="col-12 col-md-6">
           <q-input filled v-model="settings.display_name" label="Display name (optional)"></q-input>
