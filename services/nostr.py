@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
 
+from loguru import logger
 from lnbits.extensions.nostrclient.helpers import normalize_public_key
 from lnbits.extensions.nostrclient.nostr.event import Event
 from lnbits.extensions.nostrclient.nostr.key import PrivateKey, PublicKey
 from lnbits.extensions.nostrclient.router import nostr_client
+from websocket import create_connection
 
 from ..crud import create_nostr_event
 from ..helpers import json_dumps
@@ -107,3 +110,50 @@ def get_npub(pubkey_hex: str | None) -> str | None:
     if not pubkey_hex:
         return None
     return PublicKey(bytes.fromhex(normalize_public_key(pubkey_hex))).bech32()
+
+
+async def fetch_published_profile(
+    pubkey_hex: str, fallback_relays: list[str] | None = None
+) -> dict | None:
+    pubkey_hex = normalize_public_key(pubkey_hex)
+    relays = list(nostr_client.relay_manager.relays.keys()) or list(fallback_relays or [])
+    if not relays:
+        return None
+
+    subscription_id = urlsafe_short_hash()
+    request = json.dumps(
+        ["REQ", subscription_id, {"authors": [pubkey_hex], "kinds": [0], "limit": 1}]
+    )
+    deadline = time.time() + 3
+
+    for relay in relays:
+        ws = None
+        try:
+            ws = create_connection(relay, timeout=2)
+            ws.send(request)
+            while time.time() < deadline:
+                raw_message = ws.recv()
+                message = json.loads(raw_message)
+                if not message:
+                    continue
+                if message[0] == "EVENT" and len(message) > 2:
+                    event = message[2]
+                    if event.get("kind") != 0 or event.get("pubkey") != pubkey_hex:
+                        continue
+                    content = event.get("content") or "{}"
+                    profile = json.loads(content)
+                    if isinstance(profile, dict):
+                        return profile
+                if message[0] == "EOSE":
+                    break
+        except Exception as exc:
+            logger.debug(f"Failed to fetch Nostr profile from {relay}: {exc}")
+        finally:
+            try:
+                if ws:
+                    ws.send(json.dumps(["CLOSE", subscription_id]))
+                    ws.close()
+            except Exception:
+                pass
+
+    return None

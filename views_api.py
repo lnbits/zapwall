@@ -69,6 +69,7 @@ from .models import (
 from .services.nostr import (
     build_preview_event,
     build_profile_event,
+    fetch_published_profile,
     get_npub,
     publish_preview_event,
     publish_signed_event,
@@ -239,6 +240,8 @@ async def api_update_item(
                 detail=f"Price must be at least {minimum_price} sats for this upload size.",
             )
     for field, value in data.dict(exclude_unset=True).items():
+        if field == "media_upload_bytes":
+            continue
         if field == "preview_media_urls" and value is not None:
             setattr(item, "preview_media_urls_json", json_dumps(value))
             continue
@@ -289,6 +292,7 @@ async def api_update_settings(
     settings = await _wallet_settings(wallet_info)
     creator = await get_or_create_creator(wallet_info.wallet.id, wallet_info.wallet.name)
     update_data = data.dict(exclude_unset=True)
+    fetched_profile = None
 
     if "creator_nostr_pubkey" in update_data and update_data["creator_nostr_pubkey"]:
         normalized_pubkey = await _normalize_pubkey_or_400(
@@ -298,10 +302,21 @@ async def api_update_settings(
         creator.nostr_npub = get_npub(normalized_pubkey)
         settings.creator_nostr_pubkey = normalized_pubkey
         settings.creator_npub = creator.nostr_npub
+        fetched_profile = await fetch_published_profile(
+            normalized_pubkey, settings.relay_urls
+        )
     if "display_name" in update_data:
         creator.display_name = update_data["display_name"]
     if "profile" in update_data:
         creator.profile_json = json_dumps(update_data["profile"])
+    elif fetched_profile:
+        creator.profile_json = json_dumps(fetched_profile)
+    if fetched_profile and not creator.display_name:
+        creator.display_name = (
+            fetched_profile.get("display_name")
+            or fetched_profile.get("name")
+            or creator.display_name
+        )
     await update_creator(creator)
 
     if creator.nostr_pubkey:
