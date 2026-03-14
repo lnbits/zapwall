@@ -1,9 +1,9 @@
 from __future__ import annotations
-
-import json
 from http import HTTPStatus
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import Response
 from lnbits.core.crud import get_user
 from lnbits.core.models import CreateInvoice, WalletTypeInfo
 from lnbits.core.services import create_payment_request
@@ -13,6 +13,7 @@ from lnbits.helpers import urlsafe_short_hash
 
 from .crud import (
     create_item,
+    create_media,
     get_dashboard_stats,
     get_item,
     get_item_by_preview_event_id,
@@ -21,6 +22,8 @@ from .crud import (
     get_latest_receipt_for_purchase,
     get_or_create_creator,
     get_or_create_settings,
+    get_media,
+    get_media_total_size,
     get_purchase_by_unlock_token,
     get_purchase_by_zap_event,
     get_purchase_for_item_pubkey,
@@ -30,7 +33,14 @@ from .crud import (
     update_item,
     update_settings,
 )
-from .helpers import json_dumps, slugify
+from .helpers import (
+    json_dumps,
+    media_id_from_url,
+    media_ids_from_urls,
+    media_url,
+    slugify,
+    with_unlock_token,
+)
 from .models import (
     CreateInvoiceRequest,
     CreateZapwallItem,
@@ -47,12 +57,21 @@ from .models import (
     ZapReceiptNotification,
     ZapwallItem,
     ZapwallItemStatus,
+    ZapwallMedia,
+    ZapwallMediaPurpose,
+    ZapwallMediaUploadResponse,
     ZapwallPurchase,
     ZapwallPublicItem,
     ZapwallSettings,
     compute_minimum_price,
 )
-from .services.nostr import build_preview_event, get_npub, publish_preview_event
+from .services.nostr import (
+    build_preview_event,
+    build_profile_event,
+    get_npub,
+    publish_preview_event,
+    publish_signed_event,
+)
 from .services.payments import (
     create_access_purchase,
     finalize_invoice_payment,
@@ -63,13 +82,34 @@ from .services.receipts import ensure_receipt_for_purchase
 zapwall_api_router = APIRouter()
 
 
-def _settings_for_client(settings: ZapwallSettings) -> ZapwallSettings:
-    return settings.copy(
-        update={
-            "signer_private_key": None,
-            "bot_private_key": None,
+def _settings_for_client(settings: ZapwallSettings, creator) -> dict:
+    safe_settings = settings.copy(
+        update={"signer_private_key": None, "bot_private_key": None}
+    )
+    payload = jsonable_encoder(safe_settings)
+    payload.update(
+        {
+            "display_name": creator.display_name,
+            "profile": creator.profile,
+            "signer_configured": bool(settings.signer_private_key),
+            "bot_configured": bool(settings.bot_private_key),
         }
     )
+    return payload
+
+
+async def _item_media_upload_bytes(
+    cover_image: str | None, preview_media_urls: list[str], media_urls: list[str]
+) -> int:
+    media_ids = media_ids_from_urls(preview_media_urls + media_urls)
+    cover_media_id = media_id_from_url(cover_image)
+    if cover_media_id:
+        media_ids.append(cover_media_id)
+    return await get_media_total_size(list(dict.fromkeys(media_ids)))
+
+
+def _unlock_media_urls(urls: list[str], token: str) -> list[str]:
+    return [with_unlock_token(url, token) for url in urls]
 
 
 def _normalize_pubkey_or_400(pubkey: str) -> str:
@@ -126,7 +166,13 @@ async def api_create_item(
     data: CreateZapwallItem, wallet_info: WalletTypeInfo = Depends(require_admin_key)
 ) -> ZapwallItem:
     settings = await _wallet_settings(wallet_info)
-    minimum_price = compute_minimum_price(data.media_upload_bytes, settings.sats_per_mb)
+    upload_bytes = (
+        await _item_media_upload_bytes(
+            data.cover_image, data.preview_media_urls, data.media_urls
+        )
+        + data.media_upload_bytes
+    )
+    minimum_price = compute_minimum_price(upload_bytes, settings.sats_per_mb)
     if minimum_price and data.price < minimum_price:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST,
@@ -168,8 +214,19 @@ async def api_update_item(
     item = await _assert_item_wallet(item_id, wallet_info, write=True)
     settings = await _wallet_settings(wallet_info)
     if data.media_upload_bytes is not None:
+        preview_media_urls = (
+            data.preview_media_urls
+            if data.preview_media_urls is not None
+            else item.preview_media_urls
+        )
+        media_urls = data.media_urls if data.media_urls is not None else item.media_urls
+        cover_image = data.cover_image if data.cover_image is not None else item.cover_image
+        upload_bytes = (
+            await _item_media_upload_bytes(cover_image, preview_media_urls, media_urls)
+            + data.media_upload_bytes
+        )
         minimum_price = compute_minimum_price(
-            data.media_upload_bytes, settings.sats_per_mb
+            upload_bytes, settings.sats_per_mb
         )
         new_price = data.price if data.price is not None else item.price
         if minimum_price and new_price < minimum_price:
@@ -213,16 +270,17 @@ async def api_item_buyers(
 @zapwall_api_router.get("/api/v1/settings")
 async def api_get_settings(
     wallet_info: WalletTypeInfo = Depends(require_admin_key),
-) -> ZapwallSettings:
+) -> dict:
     settings = await _wallet_settings(wallet_info)
-    return _settings_for_client(settings)
+    creator = await get_or_create_creator(wallet_info.wallet.id, wallet_info.wallet.name)
+    return _settings_for_client(settings, creator)
 
 
 @zapwall_api_router.put("/api/v1/settings")
 async def api_update_settings(
     data: UpdateZapwallSettings,
     wallet_info: WalletTypeInfo = Depends(require_admin_key),
-) -> ZapwallSettings:
+) -> dict:
     user = await _wallet_owner(wallet_info)
     settings = await _wallet_settings(wallet_info)
     creator = await get_or_create_creator(wallet_info.wallet.id, wallet_info.wallet.name)
@@ -277,7 +335,7 @@ async def api_update_settings(
             )
         settings.sats_per_mb = update_data["sats_per_mb"] or 0
     settings = await update_settings(settings)
-    return _settings_for_client(settings)
+    return _settings_for_client(settings, creator)
 
 
 @zapwall_api_router.get("/api/v1/nostr/profile")
@@ -290,6 +348,72 @@ async def api_nostr_profile(
         creator_pubkey=settings.creator_nostr_pubkey,
         bot_pubkey=settings.bot_public_key,
     )
+
+
+@zapwall_api_router.post("/api/v1/media/upload")
+async def api_upload_media(
+    file: UploadFile = File(...),
+    purpose: ZapwallMediaPurpose = Form(...),
+    item_id: str | None = Form(None),
+    wallet_info: WalletTypeInfo = Depends(require_admin_key),
+) -> ZapwallMediaUploadResponse:
+    item = None
+    if item_id:
+        item = await _assert_item_wallet(item_id, wallet_info, write=True)
+    if purpose != ZapwallMediaPurpose.profile_picture and not item_id:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="item_id is required for item media uploads.",
+        )
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, detail="Uploaded file is empty."
+        )
+    content_type = file.content_type or "application/octet-stream"
+    media = ZapwallMedia(
+        id=urlsafe_short_hash(),
+        wallet=wallet_info.wallet.id,
+        item_id=item.id if item else None,
+        purpose=purpose,
+        filename=file.filename or f"{purpose.value}-{urlsafe_short_hash()[:6]}",
+        content_type=content_type,
+        size_bytes=len(contents),
+        data=contents,
+    )
+    await create_media(media)
+    return ZapwallMediaUploadResponse(
+        id=media.id,
+        url=media_url(media.id),
+        filename=media.filename,
+        content_type=media.content_type,
+        size_bytes=media.size_bytes,
+        purpose=media.purpose,
+    )
+
+
+@zapwall_api_router.get("/api/v1/media/{media_id}")
+async def api_get_media_blob(media_id: str, token: str | None = None) -> Response:
+    media = await get_media(media_id)
+    if not media:
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Media not found.")
+    if media.purpose == ZapwallMediaPurpose.unlock_media:
+        if not token:
+            raise HTTPException(
+                status_code=HTTPStatus.FORBIDDEN,
+                detail="Unlock token is required for protected media.",
+            )
+        purchase = await get_purchase_by_unlock_token(token)
+        if not purchase or purchase.item_id != media.item_id:
+            raise HTTPException(
+                status_code=HTTPStatus.FORBIDDEN,
+                detail="Invalid unlock token for this media.",
+            )
+    headers = {"Cache-Control": "public, max-age=3600"}
+    if media.purpose == ZapwallMediaPurpose.unlock_media:
+        headers["Cache-Control"] = "private, max-age=300"
+    headers["Content-Disposition"] = f'inline; filename="{media.filename}"'
+    return Response(content=media.data, media_type=media.content_type, headers=headers)
 
 
 @zapwall_api_router.post("/api/v1/items/{item_id}/publish-preview")
@@ -315,6 +439,26 @@ async def api_publish_preview(
     await update_item(item)
     return PreviewPublishResponse(
         published=published, event_id=event["id"], event=event, relays=relays
+    )
+
+
+@zapwall_api_router.post("/api/v1/profile/publish")
+async def api_publish_profile(
+    wallet_info: WalletTypeInfo = Depends(require_admin_key),
+) -> PreviewPublishResponse:
+    settings = await _wallet_settings(wallet_info)
+    creator = await get_or_create_creator(wallet_info.wallet.id, wallet_info.wallet.name)
+    event = await build_profile_event(settings, creator)
+    published = False
+    relays = settings.relay_urls
+    if settings.signing_mode.value == "internal" and settings.signer_private_key:
+        event = await publish_signed_event(event, settings.signer_private_key)
+        published = True
+    return PreviewPublishResponse(
+        published=published,
+        event_id=event["id"],
+        event=event,
+        relays=relays,
     )
 
 
@@ -452,14 +596,14 @@ async def api_unlock(token: str) -> UnlockContentResponse:
         unlock_mode=item.unlock_type,
         cover_image=item.cover_image,
         preview_media_urls=item.preview_media_urls,
-        media_urls=item.media_urls,
+        media_urls=_unlock_media_urls(item.media_urls, token),
         status=item.status,
         expires_at=item.expires_at,
     )
     return UnlockContentResponse(
         item=public_item,
         full_text=item.full_text,
-        media_urls=item.media_urls,
+        media_urls=_unlock_media_urls(item.media_urls, token),
         receipt=receipt.receipt_payload if receipt else None,
     )
 

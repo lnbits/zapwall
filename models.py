@@ -51,6 +51,13 @@ class ZapwallSigningMode(str, Enum):
     internal = "internal"
 
 
+class ZapwallMediaPurpose(str, Enum):
+    cover_image = "cover_image"
+    preview_media = "preview_media"
+    unlock_media = "unlock_media"
+    profile_picture = "profile_picture"
+
+
 class ZapwallCreator(BaseModel):
     id: str
     wallet: str
@@ -138,6 +145,18 @@ class ZapwallNostrEvent(BaseModel):
     raw_event: str
     seen_at: int = Field(default_factory=timestamp_now)
     verified: bool = False
+
+
+class ZapwallMedia(BaseModel):
+    id: str
+    wallet: str
+    item_id: str | None = None
+    purpose: ZapwallMediaPurpose
+    filename: str
+    content_type: str
+    size_bytes: int = Field(..., ge=0)
+    data: bytes
+    created_at: int = Field(default_factory=timestamp_now)
 
 
 class ZapwallSettings(BaseModel):
@@ -288,6 +307,15 @@ class PreviewPublishResponse(BaseModel):
     event_id: str
     event: dict
     relays: list[str] = Field(default_factory=list)
+
+
+class ZapwallMediaUploadResponse(BaseModel):
+    id: str
+    url: str
+    filename: str
+    content_type: str
+    size_bytes: int = Field(..., ge=0)
+    purpose: ZapwallMediaPurpose
 
 
 class DMDeliveryResponse(BaseModel):

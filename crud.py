@@ -9,6 +9,7 @@ from .models import (
     DashboardStats,
     ZapwallCreator,
     ZapwallItem,
+    ZapwallMedia,
     ZapwallNostrEvent,
     ZapwallPurchase,
     ZapwallReceipt,
@@ -247,6 +248,35 @@ async def get_latest_receipt_for_purchase(purchase_id: str) -> ZapwallReceipt | 
 async def create_nostr_event(event: ZapwallNostrEvent) -> ZapwallNostrEvent:
     await db.insert("zapwall.nostr_events", event)
     return event
+
+
+async def create_media(media: ZapwallMedia) -> ZapwallMedia:
+    await db.insert("zapwall.media", media)
+    return media
+
+
+async def get_media(media_id: str) -> ZapwallMedia | None:
+    return await db.fetchone(
+        "SELECT * FROM zapwall.media WHERE id = :id",
+        {"id": media_id},
+        ZapwallMedia,
+    )
+
+
+async def get_media_total_size(media_ids: list[str]) -> int:
+    if not media_ids:
+        return 0
+    placeholders = ",".join([f":media_{i}" for i in range(len(media_ids))])
+    values = {f"media_{i}": media_id for i, media_id in enumerate(media_ids)}
+    row = await db.fetchone(
+        f"""
+        SELECT COALESCE(SUM(size_bytes), 0) AS total_size
+        FROM zapwall.media
+        WHERE id IN ({placeholders})
+        """,
+        values,
+    )
+    return int(dict(row or {}).get("total_size", 0) or 0)
 
 
 async def get_dashboard_stats(wallet: str) -> DashboardStats:

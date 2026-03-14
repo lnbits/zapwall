@@ -11,11 +11,13 @@ from lnbits.core.models.users import Account
 from lnbits.decorators import check_admin
 from lnbits.helpers import template_renderer
 
+from .helpers import json_dumps, with_unlock_token
 from .crud import (
     get_dashboard_stats,
     get_item,
     get_item_purchases,
     get_latest_receipt_for_purchase,
+    get_or_create_creator,
     get_or_create_settings,
     get_purchase_by_unlock_token,
     get_wallet_items,
@@ -42,6 +44,7 @@ async def _page_context(account: Account):
     wallet = await get_wallet(wallet_id) if wallet_id else None
     if not wallet:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Wallet not found.")
+    creator = await get_or_create_creator(wallet.id, wallet.name)
     settings = await get_or_create_settings(wallet.id, user.id)
     stats = await get_dashboard_stats(wallet.id)
     items = await get_wallet_items(wallet.id)
@@ -49,6 +52,7 @@ async def _page_context(account: Account):
     return {
         "account_user": user,
         "wallet": wallet,
+        "creator": creator,
         "settings": settings,
         "stats": stats,
         "items": items,
@@ -56,18 +60,28 @@ async def _page_context(account: Account):
     }
 
 
-def _admin_payload(context: dict, page: str, **extra: dict) -> dict:
-    settings = context["settings"].copy(
-        update={
-            "signer_private_key": None,
-            "bot_private_key": None,
+def _settings_seed(context: dict) -> dict:
+    safe_settings = context["settings"].copy(
+        update={"signer_private_key": None, "bot_private_key": None}
+    )
+    payload = jsonable_encoder(safe_settings)
+    payload.update(
+        {
+            "display_name": context["creator"].display_name,
+            "profile": context["creator"].profile,
+            "signer_configured": bool(context["settings"].signer_private_key),
+            "bot_configured": bool(context["settings"].bot_private_key),
         }
     )
+    return payload
+
+
+def _admin_payload(context: dict, page: str, **extra: dict) -> dict:
     return {
         "page": page,
         "wallet": jsonable_encoder(context["wallet"]),
         "stats": jsonable_encoder(context["stats"]),
-        "settings": jsonable_encoder(settings),
+        "settings": _settings_seed(context),
         "items": jsonable_encoder(context["items"]),
         "isSuperUser": context["account_user"].super_user,
         "nostrclientActive": context["nostrclient_active"],
@@ -166,6 +180,13 @@ async def unlocked_item_page(request: Request, token: str):
     item = await get_item(purchase.item_id)
     if not item:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Item not found.")
+    item = item.copy(
+        update={
+            "media_urls_json": json_dumps(
+                [with_unlock_token(url, token) for url in item.media_urls]
+            )
+        }
+    )
     receipt = await get_latest_receipt_for_purchase(purchase.id)
     return zapwall_renderer().TemplateResponse(
         "zapwall/unlock.html",

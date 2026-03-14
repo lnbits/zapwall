@@ -157,3 +157,33 @@ async def m003_default_relays(db: Database):
         WHERE bot_relay_urls_json IS NULL OR bot_relay_urls_json = '' OR bot_relay_urls_json = '[]'
         """
     )
+
+
+async def m004_media_blobs(db: Database):
+    await db.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS zapwall.media (
+            id TEXT PRIMARY KEY,
+            wallet TEXT NOT NULL,
+            item_id TEXT,
+            purpose TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            data {db.blob} NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS zapwall.zapwall_media_wallet_idx
+        ON media (wallet);
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS zapwall.zapwall_media_item_idx
+        ON media (item_id);
+        """
+    )

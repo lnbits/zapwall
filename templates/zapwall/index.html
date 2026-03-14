@@ -269,17 +269,29 @@
           <q-step :name="2" title="Unlocked content" caption="What buyers get after paying">
             <div class="row q-col-gutter-md">
               <div class="col-12 col-md-6">
-                <q-select
-                  filled
-                  emit-value
-                  map-options
-                  v-model="currentItem.unlock_type"
-                  :options="unlockModeOptions"
-                  label="Unlock mode"
-                ></q-select>
+                <q-select filled emit-value map-options v-model="currentItem.unlock_type" :options="unlockModeOptions" label="Unlock mode"></q-select>
               </div>
               <div class="col-12 col-md-6">
-                <q-input filled v-model="currentItem.cover_image" label="Preview cover image URL (optional)"></q-input>
+                <q-input filled v-model="currentItem.cover_image" label="Preview cover image URL (optional external URL)"></q-input>
+                <q-file
+                  filled
+                  clearable
+                  class="q-mt-sm"
+                  accept="image/*"
+                  label="Upload preview cover image"
+                  :disable="!currentItem.id"
+                  @update:model-value="uploadCoverImage"
+                ></q-file>
+                <div class="text-caption text-grey-7 q-mt-xs">
+                  Save the paywall once before uploading files. Uploaded files are stored inside Zapwall.
+                </div>
+                <q-img
+                  v-if="currentItem.cover_image"
+                  :src="currentItem.cover_image"
+                  class="q-mt-sm rounded-borders"
+                  style="max-width: 240px"
+                  fit="contain"
+                ></q-img>
               </div>
               <div class="col-12 col-md-6">
                 <q-toggle v-model="currentItem.exact_amount_only" label="Require exact payment amount"></q-toggle>
@@ -298,11 +310,19 @@
             >
               <div class="row q-col-gutter-md q-pt-md">
                 <div class="col-12 col-md-6">
-                  <div class="text-caption q-mb-sm">Preview media URLs</div>
-                  <div class="text-caption text-grey-7 q-mb-sm">Use hosted file URLs for now. Blob storage is not enabled in this MVP.</div>
+                  <div class="text-caption q-mb-sm">Preview media</div>
+                  <q-file
+                    filled
+                    clearable
+                    multiple
+                    class="q-mb-sm"
+                    label="Upload preview media"
+                    :disable="!currentItem.id"
+                    @update:model-value="uploadPreviewMedia"
+                  ></q-file>
                   <div class="row q-col-gutter-sm q-mb-sm">
                     <div class="col">
-                      <q-input filled dense v-model="newPreviewMediaUrl" label="Add preview media URL"></q-input>
+                      <q-input filled dense v-model="newPreviewMediaUrl" label="Add preview media URL (optional external URL)"></q-input>
                     </div>
                     <div class="col-auto">
                       <q-btn unelevated color="primary" @click="addPreviewMediaUrl">Add</q-btn>
@@ -318,17 +338,22 @@
                   </q-chip>
                 </div>
                 <div class="col-12 col-md-4">
-                  <q-input filled type="number" v-model.number="currentItem.media_upload_bytes" label="Upload bytes"></q-input>
-                </div>
-                <div class="col-12 col-md-4">
                   <q-input filled type="number" v-model.number="currentItem.expires_at" label="Expiry timestamp (optional)"></q-input>
                 </div>
                 <div class="col-12 col-md-6">
-                  <div class="text-caption q-mb-sm">Unlocked media URLs</div>
-                  <div class="text-caption text-grey-7 q-mb-sm">These URLs are shown only after payment.</div>
+                  <div class="text-caption q-mb-sm">Unlocked media</div>
+                  <q-file
+                    filled
+                    clearable
+                    multiple
+                    class="q-mb-sm"
+                    label="Upload unlocked media"
+                    :disable="!currentItem.id"
+                    @update:model-value="uploadUnlockedMedia"
+                  ></q-file>
                   <div class="row q-col-gutter-sm q-mb-sm">
                     <div class="col">
-                      <q-input filled dense v-model="newMediaUrl" label="Add unlocked media URL"></q-input>
+                      <q-input filled dense v-model="newMediaUrl" label="Add unlocked media URL (optional external URL)"></q-input>
                     </div>
                     <div class="col-auto">
                       <q-btn unelevated color="primary" @click="addMediaUrl">Add</q-btn>
@@ -363,6 +388,10 @@
             <div class="text-caption text-grey-7 q-mb-md">
               When this is published, buyers can zap the note and receive a DM unlock.
             </div>
+            <q-banner rounded class="bg-grey-2 text-grey-9 q-mb-md">
+              <div class="text-weight-medium">Publish status</div>
+              <div v-text="publishHelpText"></div>
+            </q-banner>
             <q-input
               filled
               autogrow
@@ -374,11 +403,11 @@
               <q-btn
                 unelevated
                 color="secondary"
-                :disable="!canPublishCurrentItem"
+                :disable="!canPublishCurrentItem || !canSignAndPublish"
                 :loading="loading"
                 @click="publishPreview"
               >
-                Publish preview
+                <span v-text="publishButtonLabel"></span>
               </q-btn>
               <q-btn flat icon="content_copy" v-if="publicLink" @click="copyText(publicLink)">
                 Copy public link
@@ -457,6 +486,78 @@
         <div class="col-12 col-md-6">
           <q-input filled v-model="settings.display_name" label="Display name (optional)"></q-input>
         </div>
+      </q-card-section>
+
+      <q-card-section>
+        <div class="text-subtitle1">Profile</div>
+        <div class="text-caption text-grey-7 q-mb-md">
+          Edit your Nostr profile metadata and publish it as a kind 0 event.
+        </div>
+        <q-banner rounded class="bg-grey-2 text-grey-9 q-mb-md">
+          <div v-text="profilePublishHelpText"></div>
+        </q-banner>
+      </q-card-section>
+
+      <q-card-section class="row q-col-gutter-md">
+        <div class="col-12 col-md-6">
+          <q-input filled v-model="settings.profile.name" label="Profile name (optional)"></q-input>
+        </div>
+        <div class="col-12 col-md-6">
+          <q-input filled v-model="settings.profile.nip05" label="NIP-05 identifier (optional)"></q-input>
+        </div>
+        <div class="col-12">
+          <q-input filled autogrow type="textarea" v-model="settings.profile.about" label="Profile bio / about (optional)"></q-input>
+        </div>
+        <div class="col-12 col-md-6">
+          <div class="text-caption q-mb-sm">Profile picture</div>
+          <q-file
+            filled
+            clearable
+            accept="image/*"
+            label="Upload profile picture"
+            @update:model-value="uploadProfilePicture"
+          ></q-file>
+          <q-input
+            filled
+            class="q-mt-sm"
+            v-model="settings.profile.picture"
+            label="Profile picture URL (optional external URL)"
+          ></q-input>
+          <q-img
+            v-if="settings.profile.picture"
+            :src="settings.profile.picture"
+            class="q-mt-sm rounded-borders"
+            style="max-width: 120px; max-height: 120px"
+            fit="cover"
+          ></q-img>
+        </div>
+        <div class="col-12 col-md-6">
+          <q-input filled v-model="settings.profile.website" label="Website URL (optional)"></q-input>
+        </div>
+      </q-card-section>
+
+      <q-card-section>
+        <div class="row q-gutter-sm">
+          <q-btn unelevated color="primary" :loading="loading" @click="saveSettings">Save profile and settings</q-btn>
+          <q-btn
+            unelevated
+            color="secondary"
+            :disable="!canSignAndPublish"
+            :loading="loading"
+            @click="publishProfile"
+          >
+            Publish profile
+          </q-btn>
+        </div>
+        <q-card flat bordered class="q-mt-md" v-if="profileEvent">
+          <q-card-section>
+            <div class="text-subtitle2">Latest published profile event</div>
+            <pre style="white-space: pre-wrap; margin: 0" v-text="JSON.stringify(profileEvent.event, null, 2)"></pre>
+          </q-card-section>
+        </q-card>
+      </q-card-section>
+
+      <q-card-section class="row q-col-gutter-md">
         <div class="col-12 col-md-6">
           <q-select
             filled
@@ -506,9 +607,17 @@
           <div class="row q-col-gutter-md q-pt-md">
             <div class="col-12 col-md-6">
               <q-input filled type="password" v-model="settings.signer_private_key" label="Signer private key / nsec (optional)"></q-input>
+              <div class="text-caption text-grey-7 q-mt-xs">
+                <span v-if="settings.signer_configured">A signer key is already saved. Enter a new one only to replace it.</span>
+                <span v-else>No signer key saved yet.</span>
+              </div>
             </div>
             <div class="col-12 col-md-6">
               <q-input filled type="password" v-model="settings.bot_private_key" label="Bot private key / nsec (optional)"></q-input>
+              <div class="text-caption text-grey-7 q-mt-xs">
+                <span v-if="settings.bot_configured">A bot key is already saved. Enter a new one only to replace it.</span>
+                <span v-else>No bot key saved yet.</span>
+              </div>
             </div>
           </div>
         </q-expansion-item>

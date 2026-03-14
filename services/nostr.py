@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from lnbits.extensions.nostrclient.helpers import normalize_public_key
 from lnbits.extensions.nostrclient.nostr.event import Event
 from lnbits.extensions.nostrclient.nostr.key import PrivateKey, PublicKey
@@ -15,6 +17,18 @@ def _load_private_key(raw: str) -> PrivateKey:
     if raw.startswith("nsec1"):
         return PrivateKey.from_nsec(raw)
     return PrivateKey(bytes.fromhex(raw))
+
+
+def _event_payload(event: Event) -> dict:
+    return {
+        "id": event.id,
+        "pubkey": event.public_key,
+        "created_at": event.created_at,
+        "kind": event.kind,
+        "tags": event.tags,
+        "content": event.content,
+        "sig": event.signature,
+    }
 
 
 async def build_preview_event(
@@ -39,18 +53,27 @@ async def build_preview_event(
         ["alt", f"Preview for {item.title}"],
     ]
     event = Event(content=content, public_key=creator_pubkey, tags=tags)
-    return {
-        "id": event.id,
-        "pubkey": event.public_key,
-        "created_at": event.created_at,
-        "kind": event.kind,
-        "tags": event.tags,
-        "content": event.content,
-        "sig": event.signature,
-    }
+    return _event_payload(event)
 
 
-async def publish_preview_event(event_dict: dict, private_key_raw: str) -> dict:
+async def build_profile_event(
+    settings: ZapwallSettings,
+    creator: ZapwallCreator,
+) -> dict:
+    creator_pubkey = settings.creator_nostr_pubkey or creator.nostr_pubkey
+    if not creator_pubkey:
+        raise ValueError("Creator nostr pubkey is not configured.")
+    creator_pubkey = normalize_public_key(creator_pubkey)
+    profile = dict(creator.profile)
+    if creator.display_name and not profile.get("display_name"):
+        profile["display_name"] = creator.display_name
+    if creator.display_name and not profile.get("name"):
+        profile["name"] = creator.display_name
+    event = Event(content=json.dumps(profile), public_key=creator_pubkey, kind=0, tags=[])
+    return _event_payload(event)
+
+
+async def publish_signed_event(event_dict: dict, private_key_raw: str) -> dict:
     private_key = _load_private_key(private_key_raw)
     event = Event(
         content=event_dict["content"],
@@ -60,15 +83,7 @@ async def publish_preview_event(event_dict: dict, private_key_raw: str) -> dict:
         tags=event_dict["tags"],
     )
     private_key.sign_event(event)
-    event_payload = {
-        "id": event.id,
-        "pubkey": event.public_key,
-        "created_at": event.created_at,
-        "kind": event.kind,
-        "tags": event.tags,
-        "content": event.content,
-        "sig": event.signature,
-    }
+    event_payload = _event_payload(event)
     nostr_client.relay_manager.publish_message(event.to_message())
     await create_nostr_event(
         ZapwallNostrEvent(
@@ -82,6 +97,10 @@ async def publish_preview_event(event_dict: dict, private_key_raw: str) -> dict:
         )
     )
     return event_payload
+
+
+async def publish_preview_event(event_dict: dict, private_key_raw: str) -> dict:
+    return await publish_signed_event(event_dict, private_key_raw)
 
 
 def get_npub(pubkey_hex: str | None) -> str | None:

@@ -24,9 +24,17 @@ function defaultSettings() {
     signing_mode: 'external',
     signer_private_key: '',
     bot_private_key: '',
+    signer_configured: false,
+    bot_configured: false,
     sats_per_mb: 0,
     display_name: '',
-    profile: {}
+    profile: {
+      name: '',
+      about: '',
+      picture: '',
+      website: '',
+      nip05: ''
+    }
   }
 }
 
@@ -97,6 +105,7 @@ window.app = Vue.createApp({
       newMediaUrl: '',
       publishContentOverride: '',
       previewEvent: null,
+      profileEvent: null,
       loading: false
     }
   },
@@ -146,6 +155,13 @@ window.app = Vue.createApp({
     hasItems() {
       return this.items.length > 0
     },
+    canSignAndPublish() {
+      return (
+        this.nostrclientActive &&
+        this.settings.signing_mode === 'internal' &&
+        (this.settings.signer_configured || !!this.settings.signer_private_key)
+      )
+    },
     canPublishCurrentItem() {
       return !!(
         this.currentItem.id &&
@@ -153,6 +169,35 @@ window.app = Vue.createApp({
         this.currentItem.preview_text &&
         this.currentItem.price > 0
       )
+    },
+    publishHelpText() {
+      if (!this.nostrclientActive) {
+        return 'Publishing is disabled until nostrclient is installed and active.'
+      }
+      if (this.settings.signing_mode !== 'internal') {
+        return 'Set signing mode to internal to sign and publish from Zapwall.'
+      }
+      if (!this.settings.signer_configured && !this.settings.signer_private_key) {
+        return 'Add a signer private key in Settings, save it, then publish.'
+      }
+      return 'Zapwall will sign the preview event and publish it through nostrclient.'
+    },
+    publishButtonLabel() {
+      return this.canSignAndPublish
+        ? 'Sign and publish preview'
+        : 'Preview publishing not ready'
+    },
+    profilePublishHelpText() {
+      if (!this.nostrclientActive) {
+        return 'Profile publishing is disabled until nostrclient is installed and active.'
+      }
+      if (this.settings.signing_mode !== 'internal') {
+        return 'Set signing mode to internal to sign and publish your profile.'
+      }
+      if (!this.settings.signer_configured && !this.settings.signer_private_key) {
+        return 'Add a signer private key in Settings, save it, then publish your profile.'
+      }
+      return 'Zapwall will sign your profile metadata as a kind 0 event and publish it through nostrclient.'
     },
     currentItemTitle() {
       return this.currentItem?.id ? 'Edit Paywall' : 'Create Paywall'
@@ -206,9 +251,34 @@ window.app = Vue.createApp({
     openPublicItem(item) {
       window.open(`/zapwall/i/${item.id}`, '_blank', 'noopener')
     },
-    async request(method, url, key, data) {
-      const response = await LNbits.api.request(method, url, key, data)
+    async request(method, url, key, data, config = {}) {
+      const response = await LNbits.api.request(method, url, key, data, config)
       return response.data
+    },
+    fileList(value) {
+      if (!value) return []
+      return Array.isArray(value) ? value : [value]
+    },
+    async uploadMedia(filesValue, purpose, itemId = null) {
+      const files = this.fileList(filesValue)
+      if (!files.length) return []
+      const uploads = []
+      for (const file of files) {
+        const formData = new FormData()
+        formData.append('file', file)
+        formData.append('purpose', purpose)
+        if (itemId) {
+          formData.append('item_id', itemId)
+        }
+        const uploaded = await this.request(
+          'POST',
+          '/zapwall/api/v1/media/upload',
+          this.adminKey,
+          formData
+        )
+        uploads.push(uploaded)
+      }
+      return uploads
     },
     async refreshDashboard() {
       this.stats = await this.request(
@@ -279,6 +349,76 @@ window.app = Vue.createApp({
     removeMediaUrl(index) {
       this.currentItem.media_urls.splice(index, 1)
     },
+    async uploadCoverImage(file) {
+      if (!file || !this.currentItem.id) return
+      this.loading = true
+      try {
+        const [uploaded] = await this.uploadMedia(
+          file,
+          'cover_image',
+          this.currentItem.id
+        )
+        this.currentItem.cover_image = uploaded.url
+        await this.saveItem()
+      } catch (err) {
+        LNbits.utils.notifyApiError(err)
+      } finally {
+        this.loading = false
+      }
+    },
+    async uploadPreviewMedia(files) {
+      if (!files || !this.currentItem.id) return
+      this.loading = true
+      try {
+        const uploaded = await this.uploadMedia(
+          files,
+          'preview_media',
+          this.currentItem.id
+        )
+        this.currentItem.preview_media_urls = [
+          ...this.currentItem.preview_media_urls,
+          ...uploaded.map(file => file.url)
+        ]
+        await this.saveItem()
+      } catch (err) {
+        LNbits.utils.notifyApiError(err)
+      } finally {
+        this.loading = false
+      }
+    },
+    async uploadUnlockedMedia(files) {
+      if (!files || !this.currentItem.id) return
+      this.loading = true
+      try {
+        const uploaded = await this.uploadMedia(
+          files,
+          'unlock_media',
+          this.currentItem.id
+        )
+        this.currentItem.media_urls = [
+          ...this.currentItem.media_urls,
+          ...uploaded.map(file => file.url)
+        ]
+        await this.saveItem()
+      } catch (err) {
+        LNbits.utils.notifyApiError(err)
+      } finally {
+        this.loading = false
+      }
+    },
+    async uploadProfilePicture(file) {
+      if (!file) return
+      this.loading = true
+      try {
+        const [uploaded] = await this.uploadMedia(file, 'profile_picture')
+        this.settings.profile.picture = uploaded.url
+        await this.saveSettings()
+      } catch (err) {
+        LNbits.utils.notifyApiError(err)
+      } finally {
+        this.loading = false
+      }
+    },
     async saveItem() {
       this.loading = true
       try {
@@ -292,7 +432,7 @@ window.app = Vue.createApp({
           cover_image: this.currentItem.cover_image || null,
           preview_media_urls: this.currentItem.preview_media_urls,
           media_urls: this.currentItem.media_urls,
-          media_upload_bytes: Number(this.currentItem.media_upload_bytes || 0),
+          media_upload_bytes: 0,
           unlock_type: this.currentItem.unlock_type,
           exact_amount_only: !!this.currentItem.exact_amount_only,
           auto_dm_unlock: !!this.currentItem.auto_dm_unlock,
@@ -374,6 +514,28 @@ window.app = Vue.createApp({
         this.loading = false
       }
     },
+    async publishProfile() {
+      if (!this.canSignAndPublish) return
+      this.loading = true
+      try {
+        const response = await this.request(
+          'POST',
+          '/zapwall/api/v1/profile/publish',
+          this.adminKey
+        )
+        this.profileEvent = response
+        this.$q.notify({
+          type: response.published ? 'positive' : 'warning',
+          message: response.published
+            ? 'Profile published to relays'
+            : 'Profile event generated but not signed'
+        })
+      } catch (err) {
+        LNbits.utils.notifyApiError(err)
+      } finally {
+        this.loading = false
+      }
+    },
     async saveSettings() {
       this.loading = true
       try {
@@ -398,6 +560,8 @@ window.app = Vue.createApp({
         await this.request('PUT', '/zapwall/api/v1/settings', this.adminKey, payload)
         await this.refreshSettings()
         await this.refreshDashboard()
+        this.settings.signer_private_key = ''
+        this.settings.bot_private_key = ''
         this.$q.notify({type: 'positive', message: 'Settings saved'})
       } catch (err) {
         LNbits.utils.notifyApiError(err)
