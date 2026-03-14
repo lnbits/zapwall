@@ -5,7 +5,7 @@
   "repo": "https://github.com/lnbits/zapwall",
   "short_description": "Nostr-native paywalls and unlock receipts for creators.",
   "description": "",
-  "tile": "/zapwall/static/image/1.png",
+  "tile": "/zapwall/static/image/zapwall.png",
   "min_lnbits_version": "1.5.0",
   "contributors": [
     {
